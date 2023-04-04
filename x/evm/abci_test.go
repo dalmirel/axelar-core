@@ -66,7 +66,7 @@ func TestHandleGeneralMessage(t *testing.T) {
 	asset := rand.Coin()
 
 	givenMessage := Given("a message", func() {
-		msg = nexus.NewGeneralMessage(evmTestUtils.RandomHash().Hex(), sender, receiver, evmCrypto.Keccak256(payload), nexus.Approved, nil)
+		msg = nexus.NewGeneralMessage(evmTestUtils.RandomHash().Hex(), sender, receiver, evmCrypto.Keccak256(payload), nexus.Approved, evmTestUtils.RandomHash().Bytes()[:], uint64(rand.I64Between(0, 10000)), nil)
 
 		ctx, _, n, multisigKeeper, _, destinationCk = setup()
 		n.SetMessageFailedFunc = func(ctx sdk.Context, id string) error {
@@ -271,7 +271,7 @@ func TestHandleGeneralMessages(t *testing.T) {
 	})
 	withGeneralMessages := func(numPerChain map[nexus.ChainName]int) WhenStatement {
 		return When("having general messages", func() {
-			n.GetSentMessagesFunc = func(_ sdk.Context, chain nexus.ChainName, limit int64) []nexus.GeneralMessage {
+			n.GetProcessingMessagesFunc = func(_ sdk.Context, chain nexus.ChainName, limit int64) []nexus.GeneralMessage {
 				msgs := []nexus.GeneralMessage{}
 				for i := 0; i < int(limit) && i < numPerChain[chain]; i++ {
 					srcChain := nexustestutils.RandomChain()
@@ -280,7 +280,7 @@ func TestHandleGeneralMessages(t *testing.T) {
 					destChain.Module = types.ModuleName
 					sender := nexus.CrossChainAddress{Chain: srcChain, Address: evmTestUtils.RandomAddress().Hex()}
 					receiver := nexus.CrossChainAddress{Chain: destChain, Address: evmTestUtils.RandomAddress().Hex()}
-					msg := nexus.NewGeneralMessage(evmTestUtils.RandomHash().Hex(), sender, receiver, evmTestUtils.RandomHash().Bytes(), nexus.Sent, nil)
+					msg := nexus.NewGeneralMessage(evmTestUtils.RandomHash().Hex(), sender, receiver, evmTestUtils.RandomHash().Bytes(), nexus.Processing, evmTestUtils.RandomHash().Bytes()[:], uint64(rand.I64Between(0, 10000)), nil)
 					msgs = append(msgs, msg)
 				}
 				return msgs

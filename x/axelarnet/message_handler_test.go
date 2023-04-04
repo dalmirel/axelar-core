@@ -94,9 +94,9 @@ func TestHandleMessage(t *testing.T) {
 					return fmt.Errorf("module not found")
 				}
 			},
-			GenerateMessageIDFunc: func(ctx sdk.Context) string {
+			GenerateMessageIDFunc: func(ctx sdk.Context) (string, []byte, uint64) {
 				hash := sha256.Sum256(ctx.TxBytes())
-				return fmt.Sprintf("%s-%d", hex.EncodeToString(hash[:]), 0)
+				return fmt.Sprintf("%s-%d", hex.EncodeToString(hash[:]), 0), hash[:], 0
 			},
 			RateLimitTransferFunc: func(ctx sdk.Context, chain nexus.ChainName, asset sdk.Coin, direction nexus.TransferDirection) error {
 				return nil
@@ -397,6 +397,20 @@ func TestHandleMessage(t *testing.T) {
 		}).
 		Run(t)
 
+	whenMessageIsValid.
+		When("dest chain is cosmos", func() {
+			destChain.Module = exported.ModuleName
+		}).
+		When("fee denom is registered", isAssetRegistered(true)).
+		When("fee recipient is not blocked", isAddressBloked(false)).
+		When("message with fee", func() {
+			setFee(funcs.MustOk(sdk.NewIntFromString(ics20Packet.Amount)), rand.AccAddr())
+		}).
+		Then("should return ack success", func(t *testing.T) {
+			assert.True(t, axelarnet.OnRecvMessage(ctx, k, ibcK, n, b, r, packet).Success())
+			assert.Equal(t, genMsg.Status, nexus.Approved)
+		}).
+		Run(t)
 }
 
 func TestHandleMessageWithToken(t *testing.T) {
@@ -487,9 +501,9 @@ func TestHandleMessageWithToken(t *testing.T) {
 			GetChainByNativeAssetFunc: func(ctx sdk.Context, asset string) (nexus.Chain, bool) {
 				return srcChain, true
 			},
-			GenerateMessageIDFunc: func(ctx sdk.Context) string {
+			GenerateMessageIDFunc: func(ctx sdk.Context) (string, []byte, uint64) {
 				hash := sha256.Sum256(ctx.TxBytes())
-				return fmt.Sprintf("%s-%d", hex.EncodeToString(hash[:]), 0)
+				return fmt.Sprintf("%s-%d", hex.EncodeToString(hash[:]), 0), hash[:], 0
 			},
 			RateLimitTransferFunc: func(ctx sdk.Context, chain nexus.ChainName, asset sdk.Coin, direction nexus.TransferDirection) error {
 				return nil
@@ -702,9 +716,9 @@ func TestHandleSendToken(t *testing.T) {
 			EnqueueTransferFunc: func(ctx sdk.Context, senderChain nexus.Chain, recipient nexus.CrossChainAddress, asset sdk.Coin) (nexus.TransferID, error) {
 				return nexustestutils.RandomTransferID(), nil
 			},
-			GenerateMessageIDFunc: func(ctx sdk.Context) string {
+			GenerateMessageIDFunc: func(ctx sdk.Context) (string, []byte, uint64) {
 				hash := sha256.Sum256(ctx.TxBytes())
-				return fmt.Sprintf("%s-%d", hex.EncodeToString(hash[:]), 0)
+				return fmt.Sprintf("%s-%d", hex.EncodeToString(hash[:]), 0), hash[:], 0
 			},
 			RateLimitTransferFunc: func(ctx sdk.Context, chain nexus.ChainName, asset sdk.Coin, direction nexus.TransferDirection) error {
 				return nil

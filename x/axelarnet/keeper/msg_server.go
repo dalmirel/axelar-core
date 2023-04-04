@@ -57,10 +57,6 @@ func (s msgServer) CallContract(c context.Context, req *types.CallContractReques
 		return nil, fmt.Errorf("%s is not a registered chain", req.Chain)
 	}
 
-	if !chain.IsFrom(evmtypes.ModuleName) {
-		return nil, fmt.Errorf("non EVM chains are not supported")
-	}
-
 	if !s.nexus.IsChainActivated(ctx, exported.Axelarnet) {
 		return nil, fmt.Errorf("chain %s is not activated yet", exported.Axelarnet.Name)
 	}
@@ -79,12 +75,8 @@ func (s msgServer) CallContract(c context.Context, req *types.CallContractReques
 	// axelar gateway expects keccak256 hashes for payloads
 	payloadHash := crypto.Keccak256(req.Payload)
 
-	msg := nexus.NewGeneralMessage(s.nexus.GenerateMessageID(ctx), sender, recipient, payloadHash, nexus.Sent, nil)
-	if err := s.nexus.SetNewMessage(ctx, msg); err != nil {
-		return nil, sdkerrors.Wrap(err, "failed to add general message")
-	}
-
-	ctx.GasMeter().ConsumeGas(evmCallContractGasCost, "call-contract")
+	msgID, txID, nonce := s.nexus.GenerateMessageID(ctx)
+	msg := nexus.NewGeneralMessage(msgID, sender, recipient, payloadHash, nexus.Approved, txID, nonce, nil)
 
 	events.Emit(ctx, &types.ContractCallSubmitted{
 		MessageID:        msg.ID,
@@ -95,6 +87,27 @@ func (s msgServer) CallContract(c context.Context, req *types.CallContractReques
 		PayloadHash:      msg.PayloadHash,
 		Payload:          req.Payload,
 	})
+
+	if req.Fee != nil {
+
+		if s.bank.BlockedAddr(req.Fee.Recipient) {
+			return nil, fmt.Errorf("fee recipient is a blocked address")
+		}
+
+		err := s.bank.SendCoins(ctx, req.Sender, req.Fee.Recipient, sdk.NewCoins(req.Fee.Amount))
+		if err != nil {
+			return nil, sdkerrors.Wrap(err, "failed to transfer fee")
+		}
+		events.Emit(ctx, &types.FeePaid{
+			MessageID: msgID,
+			Recipient: req.Fee.Recipient,
+			Fee:       req.Fee.Amount,
+		})
+	}
+
+	if err := s.nexus.SetNewMessage(ctx, msg); err != nil {
+		return nil, sdkerrors.Wrap(err, "failed to add general message")
+	}
 
 	s.Logger(ctx).Debug(fmt.Sprintf("successfully enqueued contract call for contract address %s on chain %s from sender %s with message id %s", req.ContractAddress, req.Chain.String(), req.Sender, msg.ID),
 		types.AttributeKeyDestinationChain, req.Chain.String(),
@@ -478,8 +491,8 @@ func (s msgServer) RetryIBCTransfer(c context.Context, req *types.RetryIBCTransf
 	return &types.RetryIBCTransferResponse{}, nil
 }
 
-// ExecuteMessage triggers the actual sending of a previously submitted message
-func (s msgServer) ExecuteMessage(c context.Context, req *types.ExecuteMessageRequest) (*types.ExecuteMessageResponse, error) {
+// RouteMessage calls IBC for cosmos messages or updates the state if the message in the nexus module for any other kind
+func (s msgServer) RouteMessage(c context.Context, req *types.RouteMessageRequest) (*types.RouteMessageResponse, error) {
 	ctx := sdk.UnwrapSDKContext(c)
 
 	msg, ok := s.nexus.GetMessage(ctx, req.ID)
@@ -509,7 +522,6 @@ func (s msgServer) ExecuteMessage(c context.Context, req *types.ExecuteMessageRe
 
 	// send ibc message if destination is cosmos
 	if msg.Recipient.Chain.IsFrom(exported.ModuleName) {
-		// TODO: refactor this so cosmos senders don't need to encode payload as ABI
 		bz, err := types.TranslateMessage(msg, req.Payload)
 		if err != nil {
 			return nil, sdkerrors.Wrap(err, "invalid payload")
@@ -526,7 +538,7 @@ func (s msgServer) ExecuteMessage(c context.Context, req *types.ExecuteMessageRe
 		}
 	}
 
-	err := s.nexus.SetMessageSent(ctx, msg.ID)
+	err := s.nexus.SetMessageProcessing(ctx, msg.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -537,9 +549,9 @@ func (s msgServer) ExecuteMessage(c context.Context, req *types.ExecuteMessageRe
 		ctx.GasMeter().ConsumeGas(cosmosCallContractGasCost, "execute-message")
 	}
 
-	s.Logger(ctx).Debug("set general message status to sent", "messageID", msg.ID)
+	s.Logger(ctx).Debug("set general message status to processing", "messageID", msg.ID)
 
-	return &types.ExecuteMessageResponse{}, nil
+	return &types.RouteMessageResponse{}, nil
 }
 
 // toICS20 converts a cross chain transfer to ICS20 token
